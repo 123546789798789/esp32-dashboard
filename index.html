@@ -1,96 +1,105 @@
 <!DOCTYPE html>
 <html lang="zh">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ESP32 環境監控儀表板</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>ESP32 環境監控面板</title>
+
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700&display=swap" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+
   <style>
     body {
-      font-family: "Segoe UI", sans-serif;
       margin: 0;
-      padding: 20px;
-      background-color: #f9f9f9;
+      font-family: 'Noto Sans TC', sans-serif;
+      background: #f7f9fc;
       color: #333;
-      transition: background-color 0.3s, color 0.3s;
+      padding: 20px;
     }
-    .night-mode {
-      background-color: #121212;
-      color: #f1f1f1;
-    }
+
     h1 {
       text-align: center;
+      margin-bottom: 30px;
     }
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-      gap: 20px;
-      margin-top: 20px;
+
+    h2 {
+      margin-top: 40px;
+      margin-bottom: 10px;
     }
-    .card {
-      padding: 20px;
-      border-radius: 12px;
-      background: #ffffff;
-      box-shadow: 0 0 10px rgba(0,0,0,0.1);
-      transition: background 0.3s;
+
+    p {
+      font-size: 18px;
+      margin: 6px 0;
     }
-    .night-mode .card {
-      background: #1e1e1e;
-      box-shadow: 0 0 10px rgba(255,255,255,0.05);
-    }
-    .label {
-      font-weight: bold;
-      font-size: 1.1em;
-    }
-    #toggle-mode {
-      margin-top: 10px;
-      padding: 8px 16px;
+
+    button {
+      font-size: 16px;
+      padding: 10px 20px;
+      margin: 5px 10px 5px 0;
       border: none;
       border-radius: 8px;
-      background: #4a90e2;
-      color: white;
       cursor: pointer;
+      color: white;
     }
-    .chart-scroll {
-      overflow-x: auto;
-      width: 100%;
+
+    button.on {
+      background-color: #27ae60;
     }
-    .chart-scroll canvas {
-      min-width: 600px;
+
+    button.off {
+      background-color: #e74c3c;
+    }
+
+    canvas {
+      margin-top: 10px;
+      width: 100% !important;
+      max-width: 600px;
+      height: 300px !important;
+      display: block;
+    }
+
+    .center {
+      max-width: 600px;
+      margin: 0 auto;
     }
   </style>
 </head>
 <body>
-  <h1>ESP32 環境監控儀表板</h1>
-  <div style="text-align:center">
-    <button id="toggle-mode">切換 夜間模式</button>
-  </div>
 
-  <div class="grid">
-    <div class="card">
-      <div class="label">🌡️ 溫度</div>
-      <div><span id="temperature">等待資料...</span> °C</div>
-    </div>
-    <div class="card">
-      <div class="label">💧 濕度</div>
-      <div><span id="humidity">等待資料...</span> %</div>
-    </div>
-    <div class="card">
-      <div class="label">🧿 PM2.5</div>
-      <div><span id="pm25">等待資料...</span></div>
-    </div>
-    <div class="card">
-      <div class="label">🚪 門狀態</div>
-      <div><span id="door">等待資料...</span></div>
-    </div>
-  </div>
+  <h1>ESP32 環境監控面板</h1>
 
-  <div class="card">
-    <h3>📈 即時歷史數據</h3>
-    <div class="chart-scroll">
-      <canvas id="historyChart" height="100"></canvas>
-    </div>
+  <div class="center">
+
+    <section>
+      <h2>溫濕度</h2>
+      <p><strong>溫度：</strong> <span id="temperature">--</span> °C</p>
+      <p><strong>濕度：</strong> <span id="humidity">--</span> %</p>
+      <canvas id="tempChart"></canvas>
+      <canvas id="humChart"></canvas>
+    </section>
+
+    <section>
+      <h2>門磁感應</h2>
+      <p><strong>狀態：</strong> <span id="door">--</span></p>
+    </section>
+
+    <section>
+      <h2>繼電器控制</h2>
+      <p>
+        繼電器 1：
+        <button class="on" onclick="toggleRelay('home/relay1', 'ON')">開</button>
+        <button class="off" onclick="toggleRelay('home/relay1', 'OFF')">關</button>
+        <span id="relay1Status" style="margin-left: 10px; font-weight: bold;">--</span>
+      </p>
+      <p>
+        繼電器 2：
+        <button class="on" onclick="toggleRelay('home/relay2', 'ON')">開</button>
+        <button class="off" onclick="toggleRelay('home/relay2', 'OFF')">關</button>
+        <span id="relay2Status" style="margin-left: 10px; font-weight: bold;">--</span>
+      </p>
+    </section>
+
   </div>
 
   <script>
@@ -99,20 +108,19 @@
       password: "Qwer1234"
     });
 
-    const tempEl = document.getElementById("temperature");
-    const humEl = document.getElementById("humidity");
-    const pmEl = document.getElementById("pm25");
-    const doorEl = document.getElementById("door");
+    const maxPoints = 5;  // 只顯示最近10筆
+    let tempData = [], humData = [], timeLabels = [];
 
-    const chart = new Chart(document.getElementById("historyChart"), {
-      type: "line",
+    const tempChart = new Chart(document.getElementById('tempChart'), {
+      type: 'line',
       data: {
-        labels: [],
-        datasets: [
-          { label: "溫度 (°C)", data: [], borderColor: "red", fill: false },
-          { label: "濕度 (%)", data: [], borderColor: "blue", fill: false },
-          { label: "PM2.5", data: [], borderColor: "green", fill: false }
-        ]
+        labels: timeLabels,
+        datasets: [{
+          label: "溫度 (°C)",
+          borderColor: "#e74c3c",
+          backgroundColor: "rgba(231, 76, 60, 0.1)",
+          data: tempData
+        }]
       },
       options: {
         responsive: true,
@@ -120,46 +128,81 @@
       }
     });
 
-    client.on("connect", function () {
+    const humChart = new Chart(document.getElementById('humChart'), {
+      type: 'line',
+      data: {
+        labels: timeLabels,
+        datasets: [{
+          label: "濕度 (%)",
+          borderColor: "#3498db",
+          backgroundColor: "rgba(52, 152, 219, 0.1)",
+          data: humData
+        }]
+      },
+      options: {
+        responsive: true,
+        scales: { y: { beginAtZero: true } }
+      }
+    });
+
+    client.on("connect", () => {
       client.subscribe("home/temperature");
       client.subscribe("home/humidity");
-      client.subscribe("home/pm25");
       client.subscribe("home/door");
+      client.subscribe("home/relay1/status");
+      client.subscribe("home/relay2/status");
     });
 
-    client.on("message", function (topic, message) {
+    client.on("message", (topic, message) => {
       const msg = message.toString();
-      const timestamp = new Date().toLocaleTimeString();
+      const now = new Date().toLocaleTimeString();
 
-      switch (topic) {
-        case "home/temperature":
-          tempEl.innerText = msg;
-          chart.data.labels.push(timestamp);
-          chart.data.datasets[0].data.push(parseFloat(msg));
-          break;
-        case "home/humidity":
-          humEl.innerText = msg;
-          chart.data.datasets[1].data.push(parseFloat(msg));
-          break;
-        case "home/pm25":
-          pmEl.innerText = msg;
-          chart.data.datasets[2].data.push(parseInt(msg));
-          break;
-        case "home/door":
-          doorEl.innerText = msg === "OPEN" ? "🚪 開啟" : "🔒 關閉";
-          break;
+      if (topic === "home/temperature") {
+        document.getElementById("temperature").innerText = msg;
+        updateChart(tempChart, tempData, now, parseFloat(msg));
       }
+      else if (topic === "home/humidity") {
+        document.getElementById("humidity").innerText = msg;
+        updateChart(humChart, humData, now, parseFloat(msg));
+      }
+      else if (topic === "home/door") {
+        document.getElementById("door").innerText = msg === "OPEN" ? "開啟" : "關閉";
+      }
+      else if (topic === "home/relay1/status") {
+        updateRelayStatus("relay1Status", msg);
+      }
+      else if (topic === "home/relay2/status") {
+        updateRelayStatus("relay2Status", msg);
+      }
+    });
 
-      if (chart.data.labels.length > 20) {
+    function updateChart(chart, dataArr, label, value) {
+      if (dataArr.length >= maxPoints) {
+        dataArr.shift();
         chart.data.labels.shift();
-        chart.data.datasets.forEach(ds => ds.data.shift());
       }
+      dataArr.push(value);
+      chart.data.labels.push(label);
       chart.update();
-    });
+    }
 
-    document.getElementById("toggle-mode").addEventListener("click", () => {
-      document.body.classList.toggle("night-mode");
-    });
+    function toggleRelay(topic, state) {
+      client.publish(topic, state);
+    }
+
+    function updateRelayStatus(id, state) {
+      const el = document.getElementById(id);
+      if (state === "ON") {
+        el.innerText = "開啟";
+        el.style.color = "#27ae60";
+      } else if (state === "OFF") {
+        el.innerText = "關閉";
+        el.style.color = "#e74c3c";
+      } else {
+        el.innerText = state;
+        el.style.color = "#333";
+      }
+    }
   </script>
 </body>
 </html>
